@@ -3,7 +3,7 @@
    Run: node tests/check.mjs        (Node >= 18, no npm install)
    Exits non-zero on any failure. */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -11,9 +11,10 @@ import { execFileSync } from "node:child_process";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(ROOT, p), "utf8");
 
-const PAGE_FILES = ["index.html", "work.html", "resume.html", "about.html", "contact.html"];
-/* Home is reached via the wordmark, not a tab — the wireframes show four tabs. */
-const TAB_FILES = ["work.html", "resume.html", "about.html", "contact.html"];
+/* One scrolling document; the four tabs are section anchors. */
+const PAGE_FILES = ["index.html"];
+const SECTION_IDS = ["work", "resume", "about", "contact"];
+const TAB_LABELS = ["Work Samples", "Resume", "About Me", "Contact"];
 
 let pass = 0, fail = 0;
 const results = [];
@@ -60,17 +61,18 @@ const js  = read("assets/js/main.js");
 
 check("required files exist", () => {
   const need = [...PAGE_FILES, "assets/css/style.css", "assets/js/main.js",
-                ".nojekyll", "robots.txt", "sitemap.xml", "README.md", "tools/build.mjs"];
+                ".nojekyll", "robots.txt", "sitemap.xml", "README.md", "tools/build.mjs",
+                "assets/Sagar-Vishwakarma-Resume.pdf", "assets/Sagar-Vishwakarma-Resume.docx"];
   const missing = need.filter((f) => !existsSync(join(ROOT, f)));
   return missing.length ? `missing: ${missing.join(", ")}` : ok(`${need.length} files`);
 });
 
-check("generated pages are in sync with src/", () => {
+check("generated page is in sync with src/", () => {
   try {
     execFileSync("node", [join(ROOT, "tools/build.mjs"), "--check"], { cwd: ROOT, stdio: "pipe" });
     return ok("no drift");
   } catch (e) {
-    return "committed pages are stale — run: node tools/build.mjs";
+    return "committed page is stale — run: node tools/build.mjs";
   }
 });
 
@@ -94,135 +96,121 @@ eachPage("has a unique title and description", (html) => {
   return true;
 });
 
-check("every page title is distinct", () => {
-  const titles = PAGE_FILES.map((f) => pages[f].match(/<title>([^<]+)<\/title>/)[1]);
-  const dupes = titles.filter((t, i) => titles.indexOf(t) !== i);
-  return dupes.length ? `duplicate: ${[...new Set(dupes)].join(", ")}` : ok(`${titles.length} unique`);
-});
-
 /* ---------- navigation --------------------------------------------------- */
 
-check("tab strip is identical across all pages", () => {
-  const navs = PAGE_FILES.map((f) => {
-    const m = pages[f].match(/<nav class="tabs" id="nav"[\s\S]*?<\/nav>/);
-    return m ? m[0].replace(/ aria-current="page"/g, "").replace(/ data-bg="[^"]*"/, "") : null;
-  });
-  if (navs.some((n) => !n)) return "a page has no #nav";
-  const first = navs[0];
-  const bad = PAGE_FILES.filter((f, i) => navs[i] !== first);
-  return bad.length ? `differs on: ${bad.join(", ")}` : ok(`${PAGE_FILES.length} identical tab strips`);
-});
-
-check("each tabbed page marks itself aria-current", () => {
-  const bad = TAB_FILES.filter((f) =>
-    !new RegExp(`<a href="${f.replace(".", "\\.")}" aria-current="page">`).test(pages[f]));
-  return bad.length ? `not self-marked: ${bad.join(", ")}` : ok(`${TAB_FILES.length} tabs`);
-});
-
-check("the tab strip has exactly four tabs and no numbering", () => {
-  const strip = pages["index.html"].match(/<nav class="tabs"[\s\S]*?<\/nav>/)[0];
-  const links = [...strip.matchAll(/<a href="([^"]+)"[^>]*>([^<]+)<\/a>/g)];
-  const names = links.map((m) => m[2].trim());
+check("the tab strip has four anchor tabs, no numbering", () => {
+  const html = pages["index.html"];
+  const strip = html.match(/<nav class="tabs"[\s\S]*?<\/nav>/)[0];
+  const links = [...strip.matchAll(/<a href="#([^"]+)" data-tab="([^"]+)">[\s\S]*?<span class="t-label">([^<]+)</g)];
   const problems = [];
   if (links.length !== 4) problems.push(`${links.length} tabs, expected 4`);
-  if (names.some((n) => /\d/.test(n))) problems.push(`numbered tab labels: ${names.filter((n) => /\d/.test(n)).join(", ")}`);
-  if (strip.includes("index.html")) problems.push("Profile is still a tab");
-  const want = ["Work Samples", "Resume", "About Me", "Contact"];
-  if (names.join("|") !== want.join("|")) problems.push(`labels are ${names.join(", ")}`);
+  const names = links.map((m) => m[3].trim());
+  if (names.some((n) => /\d/.test(n))) problems.push(`numbered labels: ${names.filter((n) => /\d/.test(n)).join(", ")}`);
+  if (names.join("|") !== TAB_LABELS.join("|")) problems.push(`labels are ${names.join(", ")}`);
+  if (links.map((m) => m[1]).join("|") !== SECTION_IDS.join("|")) problems.push("tab targets do not match the section order");
   return problems.length ? problems.join("; ") : ok(names.join(" · "));
 });
 
-check("the active tab is visually enlarged, not just tinted", () => {
-  const rule = css.match(/\.tabs a\[aria-current="page"\]\s*\{[^}]*\}/);
-  if (!rule) return "no styling for the current tab";
-  const body = rule[0];
-  const problems = [];
-  if (!/font-size:/.test(body)) problems.push("no font-size bump");
-  if (!/background:/.test(body)) problems.push("no fill");
-  if (!/border-color:/.test(body)) problems.push("no border");
-  return problems.length ? problems.join("; ") : ok("enlarged + filled + bordered");
+check("no leftover section numbering", () => {
+  const html = pages["index.html"];
+  const numbered = [...html.matchAll(/<p class="eyebrow">[^<]*<span class="num">/g)];
+  return numbered.length ? `${numbered.length} eyebrows still numbered` : ok("eyebrows are unnumbered");
 });
 
-check("each tab carries its own picture background behind a scrim", () => {
-  const problems = [];
-  if (!/\.tabs::before\s*\{[^}]*color-mix/.test(css)) problems.push("no scrim over the image");
-  for (const key of ["index", "work", "resume", "about", "contact"]) {
-    if (!new RegExp(`\\.tabs\\[data-bg="${key}"\\][^}]*tab-bg-${key}`).test(css))
-      problems.push(`no background rule for ${key}`);
-    for (const ext of ["webp", "jpg"])
-      if (!existsSync(join(ROOT, `assets/img/tab-bg-${key}.${ext}`))) problems.push(`missing tab-bg-${key}.${ext}`);
-  }
-  const marked = PAGE_FILES.filter((f) => /<nav class="tabs"[^>]*data-bg="[a-z]+"/.test(pages[f]));
-  if (marked.length !== PAGE_FILES.length) problems.push(`${marked.length}/${PAGE_FILES.length} pages set data-bg`);
-  return problems.length ? problems.slice(0, 3).join("; ") : ok("5 distinct grounds + theme scrim");
+check("every tab points at a section that exists", () => {
+  const html = pages["index.html"];
+  const missing = SECTION_IDS.filter((id) => !new RegExp(`<section[^>]*\\sid="${id}"`).test(html));
+  return missing.length ? `no section for: ${missing.join(", ")}` : ok(`${SECTION_IDS.length} sections`);
 });
 
-check("the resume is previewable in-app and downloadable both ways", () => {
-  const html = pages["resume.html"];
-  const problems = [];
-  if (!/<object data="assets\/Sagar-Vishwakarma-Resume\.pdf/.test(html)) problems.push("no inline PDF preview");
-  if (!/class="pdf-fallback"/.test(html)) problems.push("preview has no non-PDF fallback");
-  if (!/href="assets\/Sagar-Vishwakarma-Resume\.pdf" download/.test(html)) problems.push("no PDF download");
-  if (!/href="assets\/Sagar-Vishwakarma-Resume\.docx" download/.test(html)) problems.push("no Word download");
-  for (const f of ["assets/Sagar-Vishwakarma-Resume.pdf", "assets/Sagar-Vishwakarma-Resume.docx"])
-    if (!existsSync(join(ROOT, f))) problems.push(`missing ${f}`);
-  return problems.length ? problems.join("; ") : ok("preview + PDF + Word");
+check("sections appear in tab order", () => {
+  const html = pages["index.html"];
+  const at = SECTION_IDS.map((id) => html.indexOf(`id="${id}"`));
+  const sorted = [...at].sort((a, b) => a - b);
+  return at.join() === sorted.join() ? ok(SECTION_IDS.join(" → ")) : "document order does not match tab order";
 });
 
-check("the Word resume is a valid, populated .docx", () => {
-  const buf = readFileSync(join(ROOT, "assets/Sagar-Vishwakarma-Resume.docx"));
-  if (buf[0] !== 0x50 || buf[1] !== 0x4b) return "not a zip container";
-  const raw = buf.toString("latin1");
-  const parts = ["[Content_Types].xml", "word/document.xml"];
-  const missing = parts.filter((p) => !raw.includes(p));
-  return missing.length ? `missing parts: ${missing.join(", ")}` : ok(`${(buf.length / 1024).toFixed(1)} KB`);
-});
-
-check("tab strip is sticky and sits inside <main>", () => {
-  if (!/\.tabs\s*\{[^}]*position:\s*sticky[^}]*top:\s*0/.test(css)) return ".tabs is not sticky at top:0";
-  const bad = PAGE_FILES.filter((f) => {
-    const mainStart = pages[f].indexOf('<main id="main">');
-    const mainEnd = pages[f].indexOf("</main>");
-    const tabAt = pages[f].indexOf('<nav class="tabs"');
-    return !(tabAt > mainStart && tabAt < mainEnd);
-  });
-  return bad.length ? `tabs outside <main> on: ${bad.join(", ")}` : ok("sticky, in <main>");
-});
-
-check("social links are rendered as labelled icons", () => {
-  const html = pages["contact.html"];
-  const items = (html.match(/class="s-icon"/g) || []).length;
-  const labelled = (html.match(/<a href="https[^>]*aria-label="/g) || []).length;
-  const svgs = (html.match(/<span class="s-icon" aria-hidden="true">/g) || []).length;
-  if (items !== 4) return `${items} social icons, expected 4`;
-  if (svgs !== 4) return "icon wrappers are not aria-hidden";
-  return labelled >= 4 ? ok("4 icon links, each with an accessible name")
-                       : `${labelled} of 4 have aria-label`;
-});
-
-check("on the Profile page the tabs follow the hero", () => {
+check("the tab strip follows the hero so it can pin", () => {
   const html = pages["index.html"];
   const hero = html.indexOf('class="section hero"');
   const tabs = html.indexOf('<nav class="tabs"');
-  return hero > -1 && tabs > hero
-    ? ok("tabs persist after the hero scrolls away")
-    : "tab strip is not placed after the hero";
+  const work = html.indexOf('id="work"');
+  return hero > -1 && tabs > hero && work > tabs
+    ? ok("hero → tabs → sections")
+    : "tab strip is not between the hero and the sections";
 });
 
-check("prev/next pager chains the four tabbed pages", () => {
-  const order = TAB_FILES;
+check("every section between the tabs and the footer is attributed to a tab", () => {
+  // An untagged section is a stretch of page where no tab is lit. The featured
+  // writing samples are Work Samples; leaving them out put a ~1,250px dead zone
+  // in front of the Work Samples tab.
+  const html = pages["index.html"];
+  const main = html.slice(html.indexOf('<nav class="tabs"'), html.indexOf("</main>"));
+  const untagged = [...main.matchAll(/<section class="section"(?![^>]*data-spy)[^>]*id="([^"]+)"/g)]
+    .map((m) => m[1]);
+  const featured = /<section class="section" data-spy="work" id="featured"/.test(html);
   const problems = [];
-  order.forEach((f, i) => {
-    const html = pages[f];
-    const hasPrev = /class="pager-link pager-prev" href="([^"]+)"/.exec(html);
-    const hasNext = /class="pager-link pager-next" href="([^"]+)"/.exec(html);
-    if (i > 0 && (!hasPrev || hasPrev[1] !== order[i - 1])) problems.push(`${f} prev`);
-    if (i < order.length - 1 && (!hasNext || hasNext[1] !== order[i + 1])) problems.push(`${f} next`);
-    if (i === 0 && hasPrev) problems.push(`${f} should have no prev`);
-    if (i === order.length - 1 && hasNext) problems.push(`${f} should have no next`);
-  });
-  return problems.length ? problems.join(", ") : ok("chain intact");
+  if (untagged.length) problems.push(`no data-spy on: ${untagged.join(", ")}`);
+  if (!featured) problems.push("#featured is not attributed to the work tab");
+  return problems.length ? problems.join("; ") : ok("every section below the tabs owns a tab");
 });
+
+check("scroll-spy drives the active tab", () => {
+  const problems = [];
+  if (!/new IntersectionObserver/.test(js)) problems.push("no IntersectionObserver");
+  if (!/setAttribute\("aria-current", "page"\)/.test(js)) problems.push("never sets aria-current");
+  if (/addEventListener\("scroll"/.test(js)) problems.push("uses a scroll listener instead of an observer");
+  return problems.length ? problems.join("; ") : ok("observer-driven, no scroll listener");
+});
+
+check("the active tab is markedly larger, not just tinted", () => {
+  const card  = css.match(/\.tabs a\[aria-current="page"\]\s*\{[^}]*\}/);
+  const photo = css.match(/\.tabs a\[aria-current="page"\] \.t-photo\s*\{[^}]*\}/);
+  const label = css.match(/\.tabs a\[aria-current="page"\] \.t-label\s*\{[^}]*\}/);
+  const problems = [];
+  if (!card || !/width:/.test(card[0])) problems.push("not wider");
+  if (!photo || !/height:/.test(photo[0])) problems.push("picture not taller");
+  if (!label || !/font-size:/.test(label[0])) problems.push("no label size bump");
+  if (!card || !/box-shadow:/.test(card[0])) problems.push("no lift");
+  return problems.length ? problems.join("; ") : ok("wider card, taller picture, bigger label");
+});
+
+check("no layout properties are transitioned on the tabs", () => {
+  // Animating width/height/font-size forces layout on every frame — that is
+  // what makes an active tab feel laggy. Only paint/composite props may animate.
+  const rules = [...css.matchAll(/\.tabs a[^{]*\{([^}]*)\}/g)].map((m) => m[1]);
+  const bad = [];
+  for (const body of rules) {
+    const t = body.match(/transition:\s*([^;]+);/);
+    if (!t) continue;
+    for (const prop of ["width", "height", "min-height", "font-size", "padding", "margin", "top", "left"])
+      if (new RegExp(`(^|[\\s,])${prop}\\s`).test(t[1])) bad.push(prop);
+  }
+  return bad.length ? `transitions layout props: ${[...new Set(bad)].join(", ")}` : ok("opacity/transform/shadow only");
+});
+
+check("each tab shows its picture in full, label on a solid bar", () => {
+  const problems = [];
+  if (/data-bg=/.test(css) || /data-bg=/.test(js)) problems.push("strip ground still swaps per section");
+  // The label never sits on the photograph — it has its own solid bar, so the
+  // picture can be shown at full strength without hurting contrast.
+  if (!/\.t-label\s*\{[^}]*background:\s*var\(--card\)/.test(css))
+    problems.push("label bar is not solid");
+  if (/\.tabs a::after\s*\{[^}]*linear-gradient/.test(css))
+    problems.push("still darkening the picture behind the label");
+  if (/\.t-photo\s*\{[^}]*opacity:\s*0?\.[0-9]/.test(css))
+    problems.push("picture is dimmed");
+  for (const key of SECTION_IDS) {
+    if (!new RegExp(`\\.tabs a\\[data-tab="${key}"\\]\\s+\\.t-photo[^}]*tab-${key}`).test(css))
+      problems.push(`no image for the ${key} tab`);
+    for (const ext of ["webp", "jpg"])
+      if (!existsSync(join(ROOT, `assets/img/tab-${key}.${ext}`))) problems.push(`missing tab-${key}.${ext}`);
+  }
+  return problems.length ? problems.slice(0, 3).join("; ") : ok("4 undimmed photos + solid label bars");
+});
+
+check("sections clear the sticky strip when jumped to", () =>
+  /scroll-margin-top:\s*\d+px/.test(css) || "no scroll-margin-top on .section");
 
 /* ---------- GitHub Pages path safety ------------------------------------- */
 
@@ -241,6 +229,15 @@ eachPage("every internal page link resolves", (html) => {
   const links = [...html.matchAll(/href="([a-z0-9-]+\.html)"/g)].map((m) => m[1]);
   const missing = [...new Set(links)].filter((l) => !existsSync(join(ROOT, l)));
   return missing.length ? `dead link: ${missing.join(", ")}` : true;
+});
+
+check("no orphaned images in assets/img", () => {
+  const used = new Set();
+  for (const m of css.matchAll(/url\("\.\.\/img\/([^"]+)"\)/g)) used.add(m[1]);
+  for (const m of ALL.matchAll(/assets\/img\/([\w.-]+)/g)) used.add(m[1]);
+  const onDisk = readdirSync(join(ROOT, "assets/img"));
+  const orphans = onDisk.filter((f) => !used.has(f));
+  return orphans.length ? `unreferenced: ${orphans.join(", ")}` : ok(`${onDisk.length} images, all referenced`);
 });
 
 eachPage("every in-page anchor has a matching id", (html) => {
@@ -270,6 +267,48 @@ eachPage("decorative svgs are aria-hidden", (html) => {
   return bad.length ? `${bad.length}/${svgs.length} lack aria-hidden` : true;
 });
 
+check("no duplicate element ids", () => {
+  // Duplicates are invalid HTML and silently break in-page anchors and
+  // aria-labelledby references.
+  const ids = [...pages["index.html"].matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  const seen = new Set(), dupes = new Set();
+  for (const id of ids) (seen.has(id) ? dupes : seen).add(id);
+  return dupes.size ? `duplicated: ${[...dupes].join(", ")}` : ok(`${seen.size} unique ids`);
+});
+
+check("every aria-labelledby points at an existing id", () => {
+  const html = pages["index.html"];
+  const ids = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
+  const dangling = [...html.matchAll(/aria-labelledby="([^"]+)"/g)]
+    .flatMap((m) => m[1].split(/\s+/)).filter((r) => !ids.has(r));
+  return dangling.length ? `no element with id: ${[...new Set(dangling)].join(", ")}` : ok("all resolve");
+});
+
+check("no aria-hidden wrapped around a focusable element", () => {
+  // axe rule aria-hidden-focus: hiding a link or button from the a11y tree while
+  // it remains reachable strands keyboard and screen-reader users on it.
+  const html = pages["index.html"];
+  const bad = [];
+  for (const m of html.matchAll(/<(a|button)\b[^>]*aria-hidden="true"[^>]*>/g)) bad.push(m[0].slice(0, 60));
+  for (const m of html.matchAll(/<[^>]+aria-hidden="true"[^>]*tabindex="-?\d"[^>]*>/g)) bad.push(m[0].slice(0, 60));
+  return bad.length ? `${bad.length} focusable element(s) hidden: ${bad[0]}…` : ok("none");
+});
+
+check("images below the fold are lazy-loaded", () => {
+  // A CSS background is always fetched; an <img loading="lazy"> is not. The four
+  // 9:16 posters alone were 211 KB of eager download before this.
+  const html = pages["index.html"];
+  const imgs = html.match(/<img\b[^>]*>/g) || [];
+  const eager = imgs.filter((t) => !/loading="lazy"/.test(t));
+  // only the hero portrait may load eagerly
+  const problems = eager.filter((t) => !/fetchpriority="high"/.test(t))
+    .map((t) => (t.match(/src="([^"]+)"/) || [])[1]);
+  const cssBg = [...css.matchAll(/url\("\.\.\/img\/(poster-[^"]+)"\)/g)].map((m) => m[1]);
+  if (cssBg.length) problems.push(`posters still CSS backgrounds: ${cssBg.join(", ")}`);
+  return problems.length ? `eagerly fetched: ${problems.join(", ")}`
+    : ok(`${imgs.length} images, ${imgs.length - eager.length} lazy`);
+});
+
 eachPage("no emoji used as icons", (html) => {
   const e = html.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu);
   return e ? `found: ${[...new Set(e)].join(" ")}` : true;
@@ -287,6 +326,15 @@ check('every Hinglish block carries lang="hi-Latn"', () => {
 });
 
 /* ---------- CSS contracts ------------------------------------------------ */
+
+check("stylesheet parses cleanly", () => {
+  const problems = [];
+  const opens = (css.match(/\{/g) || []).length, closes = (css.match(/\}/g) || []).length;
+  if (opens !== closes) problems.push(`${opens} { vs ${closes} }`);
+  // a selector must not begin with a quote or a stray delimiter
+  for (const m of css.matchAll(/(^|\n)\s*(["'`;])/g)) problems.push(`stray ${m[2]} at a rule boundary`);
+  return problems.length ? [...new Set(problems)].slice(0, 3).join("; ") : ok(`${opens} balanced rules`);
+});
 
 check("prefers-reduced-motion block present", () => /@media\s*\(prefers-reduced-motion:\s*reduce\)/.test(css));
 
@@ -338,13 +386,11 @@ eachPage("JSON-LD parses and is a Person", (html) => {
   return JSON.parse(m[1])["@type"] === "Person" ? true : "not a Person";
 });
 
-check("sitemap lists every page", () => {
+check("sitemap has no stale page entries", () => {
   const sm = read("sitemap.xml");
-  const missing = PAGE_FILES.filter((f) => !sm.includes(f === "index.html" ? "<loc>https://example.github.io/</loc>" : f));
-  const extra = [...sm.matchAll(/<loc>[^<]*\/([a-z-]+\.html)<\/loc>/g)].map((m) => m[1])
-    .filter((f) => !PAGE_FILES.includes(f));
-  if (missing.length) return `absent: ${missing.join(", ")}`;
-  return extra.length ? `stale entries: ${extra.join(", ")}` : ok(`${PAGE_FILES.length} URLs`);
+  const extra = [...sm.matchAll(/<loc>[^<]*\/([a-z-]+\.html)<\/loc>/g)].map((m) => m[1]);
+  if (!sm.includes("<loc>https://example.github.io/</loc>")) return "home URL missing";
+  return extra.length ? `stale entries: ${extra.join(", ")}` : ok("1 URL");
 });
 
 /* ---------- JS hygiene --------------------------------------------------- */
@@ -380,54 +426,141 @@ check("copy corrections from the source doc were applied", () => {
   return problems.length ? problems.join("; ") : true;
 });
 
-check("remaining gaps are still visibly marked", () => {
-  // After the resume PDF, the reels and the article links landed, the only
-  // outstanding gap is the Reqx campaign figures on the Results strip.
-  const pendingMetrics = (ALL.match(/data-pending="true"/g) || []).length;
-  const badges = (ALL.match(/class="todo"/g) || []).length;
+check("results tiles and their caveat stay in sync", () => {
+  // The three tiles Sagar asked for are Open / Response / Conversion rate.
+  // Until real figures are supplied they must stay visibly pending, and the
+  // "to be supplied" note must be present. Fill a tile and the note has to go —
+  // this stops a half-finished strip reading as measured results.
+  const html = pages["index.html"];
+  const sec = html.slice(html.indexOf('id="work"'), html.indexOf('id="resume"'));
+  const stripAt = sec.indexOf('class="metrics');
+  if (stripAt === -1) return "the results strip is missing";
+  const strip = sec.slice(stripAt, sec.indexOf("</ul>", stripAt));
+  const text = (h) => h.replace(/<[^>]+>/g, " ").replace(/&[a-z]+;/gi, " ").replace(/\s+/g, " ").trim();
+
+  const tiles = [...strip.matchAll(/class="value"([^>]*)>([\s\S]*?)<\/span>[\s\S]*?class="label"[^>]*>([\s\S]*?)<\/span>/g)]
+    .map((m) => ({ pending: /data-pending="true"/.test(m[1]), value: text(m[2]), label: text(m[3]) }));
+
   const problems = [];
-  if (pendingMetrics !== 3) problems.push(`expected 3 pending metrics, found ${pendingMetrics}`);
-  if (badges < 4) problems.push(`only ${badges} visible TODO badges`);
-  if (/<!--\s*TODO: YouTube URL/.test(ALL)) problems.push("stale YouTube TODO — reels are linked now");
-  return problems.length ? problems.join("; ") : ok(`${badges} badges / ${pendingMetrics} pending metrics`);
-});
+  const want = ["Open rate", "Response rate", "Conversion rate"];
+  want.forEach((w, i) => {
+    if (!tiles[i] || !tiles[i].label.startsWith(w)) problems.push(`tile ${i + 1} is not "${w}"`);
+  });
 
-check("all 4 reels are linked from the script cards", () => {
-  const reels = ["DWKxfhyBeGx", "DXliYTZjRg4", "DYbwxaINFa2", "DZhAhpENolS"];
-  const missing = reels.filter((r) => !ALL.includes(`instagram.com/reel/${r}/`));
-  const watch = (ALL.match(/class="watch"/g) || []).length;
-  if (missing.length) return `not linked: ${missing.join(", ")}`;
-  return watch === 4 ? ok("4 reels, one per script card") : `4 URLs but ${watch} watch links`;
-});
+  const noteShown = /Figures to be supplied/i.test(sec);
+  const SUPPLIED = { "Open rate": "60%", "Response rate": "11.5%", "Conversion rate": "3.8%" };
+  const filled = tiles.filter((t) => !t.pending);
+  const stillPending = tiles.filter((t) => t.pending);
 
-check("resume page carries the real CV content", () => {
-  const html = pages["resume.html"];
-  const must = ["Accodigit", "Reqx Technologies Pvt Ltd", "25 million total views", "20,000+",
-                "Indira Gandhi National Open University", "Google Digital Marketing",
-                "sagarvishwa5901@gmail.com", "+91", "New Delhi",
-                "Apr 2025", "Feb 2024", "May 2024"];
-  const missing = must.filter((m) => !html.includes(m));
-  return missing.length ? `absent: ${missing.join(" | ")}` : ok(`${must.length} CV anchors`);
-});
+  for (const t of filled) {
+    if (/^[\s—-]*$/.test(t.value)) problems.push(`"${t.label}" is marked filled but has no value`);
+    // pin the figures Sagar supplied, so a later edit cannot quietly change them
+    const want = SUPPLIED[t.label];
+    if (want && t.value !== want) problems.push(`"${t.label}" is ${t.value}, supplied figure was ${want}`);
+  }
+  if (stillPending.length && !noteShown) problems.push("tiles are pending but the caveat note is missing");
+  if (!stillPending.length && noteShown) problems.push("all tiles filled but the caveat note is still there");
+  // a pending tile must also carry its visible badge
+  const badges = (strip.match(/class="todo"/g) || []).length;
+  if (badges !== stillPending.length)
+    problems.push(`${badges} badges for ${stillPending.length} pending tiles`);
 
-check("the linked resume PDF is real, not a placeholder", () => {
-  const pdf = readFileSync(join(ROOT, "assets/Sagar-Vishwakarma-Resume.pdf"), "latin1");
-  if (/PLACEHOLDER/i.test(pdf)) return "still the placeholder PDF";
-  const must = ["SAGAR VISHWAKARMA", "EXPERIENCE", "SKILLS", "EDUCATION", "ACCODIGIT", "25 million"];
-  const missing = must.filter((m) => !pdf.includes(m));
-  return missing.length ? `PDF missing: ${missing.join(", ")}` : ok(`${(pdf.length / 1024).toFixed(1)} KB, real content`);
-});
-
-check("audience metrics on the scripts page are sourced, not invented", () => {
-  const html = pages["work.html"];
-  // Both figures come straight off the CV; nothing else may claim a number.
-  const okFigures = html.includes(">25M+<") && html.includes(">20,000+<");
-  return okFigures ? ok("25M+ views, 20,000+ followers — from the CV") : "metric strip does not match the CV figures";
+  return problems.length ? problems.slice(0, 3).join("; ")
+    : ok(`${want.length} tiles, ${stillPending.length} awaiting figures`);
 });
 
 check("no placeholder art left where a real image exists", () => {
   const ph = (ALL.match(/class="placeholder"/g) || []).length;
-  return ph ? `${ph} placeholder blocks remain` : ok("all 6 document images wired up");
+  return ph ? `${ph} placeholder blocks remain` : ok("every image slot filled");
+});
+
+check("each script links the reel that actually matches it", () => {
+  // Verified against each reel's own og:title caption on instagram.com:
+  //   DWKxfhyBeGx "Keeladi: India's Hidden Civilisation"
+  //   DYbwxaINFa2 "When a blue whale dives deep into the abyss..."
+  //   DZhAhpENolS "...blending the South Indian..."   (Kolaveri Di)
+  //   DXliYTZjRg4 "El Nino is heading our way..."
+  const pairs = { "script-keeladi": "DWKxfhyBeGx", "script-bluewhale": "DYbwxaINFa2",
+                  "script-kolaveri": "DZhAhpENolS", "script-elnino": "DXliYTZjRg4" };
+  const html = pages["index.html"];
+  const problems = [];
+  for (const [sid, code] of Object.entries(pairs)) {
+    const at = html.indexOf(`id="${sid}"`);
+    if (at === -1) { problems.push(`no card ${sid}`); continue; }
+    const card = html.slice(Math.max(0, at - 2600), at);
+    const found = [...card.matchAll(/instagram\.com\/reel\/([A-Za-z0-9_-]+)\//g)].map((m) => m[1]);
+    if (!found.length) problems.push(`${sid} links no reel`);
+    else if (found.some((f) => f !== code)) problems.push(`${sid} → ${[...new Set(found)].join("/")}, expected ${code}`);
+  }
+  const cta = (ALL.match(/class="poster-cta"/g) || []).length;
+  if (cta !== 4) problems.push(`${cta} watch CTAs, expected 4`);
+  // exactly one link per card — a duplicate is noise in a screen reader's link list
+  for (const card of ALL.match(/<article class="script-card reveal">[\s\S]*?<\/article>/g) || []) {
+    const links = (card.match(/href="https:\/\/www\.instagram\.com\/reel\//g) || []).length;
+    if (links !== 1) problems.push(`a card has ${links} reel links, expected 1`);
+  }
+  return problems.length ? [...new Set(problems)].join("; ") : ok("4 reels, one link each, correctly matched");
+});
+
+check("audience metrics on the scripts page are sourced, not invented", () => {
+  const html = pages["index.html"];
+  return html.includes(">25M+<") && html.includes(">20,000+<")
+    ? ok("25M+ views, 20,000+ followers — from the CV")
+    : "metric strip does not match the CV figures";
+});
+
+check("the site does not oversell the published pieces", () => {
+  // All seven Accodigit pieces are 520-850 words with 5-7 subheads — blog
+  // length, not long-form. Quoted CV/source text may say otherwise; the site's
+  // own headings and intros must not.
+  const html = pages["index.html"];
+  const featured = html.slice(html.indexOf('id="featured"'), html.indexOf("</ul>", html.indexOf('id="featured"')));
+  const heading = featured.match(/<h2[^>]*>([^<]+)<\/h2>/);
+  const intro = featured.match(/<div class="prose reveal">([\s\S]*?)<\/div>/);
+  const problems = [];
+  if (heading && /long-form/i.test(heading[1])) problems.push("featured heading still claims long-form");
+  if (intro && /long-form/i.test(intro[1])) problems.push("featured intro still claims long-form");
+  if (/<strong>Long-form articles<\/strong>/.test(html)) problems.push("services list still claims long-form articles");
+  return problems.length ? problems.join("; ") : ok("framed as published pieces, not long-form");
+});
+
+check("the resume section summarises rather than re-typesets the CV", () => {
+  const html = pages["index.html"];
+  const sec = html.slice(html.indexOf('id="resume"'), html.indexOf('id="about"'));
+  const problems = [];
+  for (const m of ["Accodigit", "Reqx Technologies", "Video Scriptwriter",
+                   "Apr 2025", "Feb 2024", "May 2024", "25M+", "20,000+"])
+    if (!sec.includes(m)) problems.push(`missing ${m}`);
+  for (const m of ["Indira Gandhi", "Google Digital Marketing", "Structural Editing", "Pivot Tables"])
+    if (sec.includes(m)) problems.push(`${m} duplicated out of the CV`);
+  if (sec.includes("sagarvishwa5901@gmail.com")) problems.push("contact details duplicated from the Contact section");
+  return problems.length ? problems.slice(0, 3).join("; ") : ok("3 roles + downloads, detail left in the document");
+});
+
+check("the resume is previewable in-app and downloadable both ways", () => {
+  const html = pages["index.html"];
+  const problems = [];
+  // <object data=...pdf> silently shows nothing in many browsers — the preview
+  // is a rendered image so it always displays.
+  if (/<object[^>]*\.pdf/.test(html)) problems.push("uses <object> for the preview — unreliable");
+  if (!/resume-preview\.(webp|jpg)/.test(html)) problems.push("no rendered preview image");
+  if (!/href="assets\/Sagar-Vishwakarma-Resume\.pdf" download/.test(html)) problems.push("no PDF download");
+  if (!/href="assets\/Sagar-Vishwakarma-Resume\.docx" download/.test(html)) problems.push("no Word download");
+  return problems.length ? problems.join("; ") : ok("preview + PDF + Word");
+});
+
+check("the full CV detail is still in the downloadable files", () => {
+  const pdf = readFileSync(join(ROOT, "assets/Sagar-Vishwakarma-Resume.pdf"), "latin1");
+  const docx = readFileSync(join(ROOT, "assets/Sagar-Vishwakarma-Resume.docx"));
+  const problems = [];
+  if (/PLACEHOLDER/i.test(pdf)) problems.push("PDF is still a placeholder");
+  for (const m of ["Indira Gandhi", "Google Digital Marketing", "SKILLS", "25 million"])
+    if (!pdf.includes(m)) problems.push(`PDF missing ${m}`);
+  if (docx[0] !== 0x50 || docx[1] !== 0x4b) problems.push("Word file is not a zip container");
+  const raw = docx.toString("latin1");
+  for (const part of ["[Content_Types].xml", "word/document.xml"])
+    if (!raw.includes(part)) problems.push(`docx missing ${part}`);
+  return problems.length ? problems.slice(0, 3).join("; ") : ok("PDF + Word carry the detail");
 });
 
 check("all 7 published articles are linked", () => {
@@ -457,10 +590,9 @@ check("every external link is rel-protected and opens in a new tab", () => {
 });
 
 check("byline name is consistent", () => {
-  // The seven published articles are all bylined "Sagar Vishwakarma".
-  const bad = Object.entries(pages).filter(([, html]) =>
-    !/"name": "Sagar Vishwakarma"/.test(html) || !/content="Sagar Vishwakarma"/.test(html));
-  return bad.length ? `stale name on: ${bad.map(([f]) => f).join(", ")}` : ok("6 pages");
+  const html = pages["index.html"];
+  return /"name": "Sagar Vishwakarma"/.test(html) && /content="Sagar Vishwakarma"/.test(html)
+    ? ok("Sagar Vishwakarma") : "stale name in metadata";
 });
 
 check("all 4 social profiles are linked", () => {
@@ -476,8 +608,8 @@ check("image aspect ratios match the source doc", () => {
   const problems = [];
   if (!/portrait-round[\s\S]{0,300}portrait\.webp/.test(pages["index.html"]))
     problems.push("hero portrait is not in the round 1:1 frame on index.html");
-  if (!/frame frame-3-4[\s\S]{0,300}about\.webp/.test(pages["about.html"]))
-    problems.push("about photo is not in a 3:4 frame on about.html");
+  if (!/frame frame-3-4[\s\S]{0,300}about\.webp/.test(pages["index.html"]))
+    problems.push("about photo is not in a 3:4 frame");
   return problems.length ? problems.join("; ") : ok("round 1:1 hero, 3:4 about");
 });
 
@@ -498,6 +630,7 @@ const dark  = tokensIn(css.slice(css.indexOf(':root[data-theme="dark"]')));
 for (const [themeName, t] of [["light", light], ["dark", dark]]) {
   check(`contrast (${themeName}): body text pairs >= 4.5:1`, () => {
     const pairs = [["ink", "paper"], ["ink-muted", "paper"], ["accent", "paper"],
+                   ["accent-label", "paper"], ["accent-label", "card"],
                    ["ink", "card"], ["ink-muted", "card"], ["accent", "card"]];
     const bad = [];
     for (const [fg, bg] of pairs) {
@@ -506,9 +639,21 @@ for (const [themeName, t] of [["light", light], ["dark", dark]]) {
       if (r < 4.5) bad.push(`--${fg} on --${bg} = ${r.toFixed(2)}:1`);
     }
     return bad.length ? bad.join(", ")
-      : ok(`6 pairs, min ${Math.min(...pairs.map(([f, b]) => ratio(t[f], t[b]))).toFixed(2)}:1`);
+      : ok(`${pairs.length} pairs, min ${Math.min(...pairs.map(([f, b]) => ratio(t[f], t[b]))).toFixed(2)}:1`);
   });
 }
+
+check("section labels are yellow and bold", () => {
+  const rule = css.match(/\.eyebrow\s*\{[^}]*\}/);
+  if (!rule) return "no .eyebrow rule";
+  const problems = [];
+  if (!/color:\s*var\(--accent-label\)/.test(rule[0])) problems.push("not using --accent-label");
+  const w = rule[0].match(/font-weight:\s*(\d+)/);
+  if (!w || +w[1] < 600) problems.push(`font-weight ${w ? w[1] : "unset"} — not bold`);
+  const count = (pages["index.html"].match(/class="eyebrow"/g) || []).length;
+  if (count !== 6) problems.push(`${count} eyebrows, expected 6`);
+  return problems.length ? problems.join("; ") : ok(`6 labels, --accent-label, weight ${w[1]}`);
+});
 
 check("accent-deco is never used for body text", () => {
   const uses = [...css.matchAll(/([^{}]+)\{[^}]*color:\s*var\(--accent-deco\)/g)].map((m) => m[1].trim());

@@ -1,46 +1,59 @@
-# Sagar — Writer Portfolio
+# Sagar Vishwakarma — Writer Portfolio
 
-A **six-page**, zero-build static portfolio for **Sagar Vishwakarma**, an email
-copywriter, short-form video scriptwriter and long-form business writer. No bundler, no npm install, no CI step — pushing
-the repo *is* the deploy.
+A **single-page**, zero-build static portfolio for **Sagar Vishwakarma** — email
+copywriter, short-form video scriptwriter and long-form business writer. No
+bundler, no npm install, no CI step: pushing the repo *is* the deploy.
 
-Page order mirrors the source document's tab structure exactly:
+Layout follows the hand-drawn wireframes in the source document: a wordmark bar,
+intro with a round profile photo, a sticky tab strip, then featured writing
+samples and four tabbed sections.
 
-| # | Page | File |
+| Tab | Section | Contents |
 |---|---|---|
-| 01 | Profile | `index.html` |
-| 02 | Email Copywriting | `email-copywriting.html` |
-| 03 | Video Scriptwriting | `scriptwriting.html` |
-| 04 | Resume + published articles | `resume.html` |
-| 05 | About | `about.html` |
-| 06 | Contact | `contact.html` |
+| — | Profile | Hero + seven featured writing samples |
+| Work Samples | `#work` | Reqx email case study + four video scripts |
+| Resume | `#resume` | Preview, PDF + Word downloads, experience, skills, education |
+| About Me | `#about` | Narrative bio, 3:4 photo |
+| Contact | `#contact` | Email, phone, four social profiles as icons |
+
+The tab strip is sticky: it rides up with the hero, pins to the top, and the
+active tab updates automatically as you scroll. A tab lights when its section
+**dominates the screen** — the scroll-spy picks whichever section has the largest
+visible area between the pinned strip and the foot of the viewport, with
+hysteresis (35% to light, 10% to release) so nothing flickers at either end. The
+featured writing samples count as Work Samples, so there is no stretch of page
+with no tab lit. Each tab is a small photo card —
+the picture is shown at full strength with the label on its own solid bar
+beneath, so the photograph never has to be dimmed to keep text readable. The
+active tab gets a wider card, a taller picture and an accent rule. Nothing about
+the size change is transitioned: animating width/height/font-size forces layout
+every frame and makes the switch feel laggy, so only paint and composite
+properties animate. A test enforces both the ban and a 110px height budget for
+the whole strip.
 
 ```
-*.html                  the six generated pages (committed — Pages serves these)
-src/pages/*.html        page body fragments        ─┐ edit these,
-src/partials/*.html     shared markup               │ then run the generator
-tools/build.mjs         page generator (dev only)  ─┘
+index.html              the generated page (committed — Pages serves this)
+src/pages/*.html        section fragments        ─┐ edit these,
+src/partials/*.html     shared markup             │ then run the generator
+tools/build.mjs         page generator (dev only)─┘
 assets/css/style.css    hand-written CSS, design tokens on :root
 assets/js/main.js       vanilla JS, progressive enhancement only
-assets/img/             portrait, about photo, 4 case-study images, favicon, OG card
-assets/Sagar-Vishwakarma-Resume.pdf   placeholder — replace with the real resume
+assets/img/             portrait, about photo, case images, tab imagery, resume preview
+assets/Sagar-Vishwakarma-Resume.pdf / .docx
 tests/                  two zero-dependency suites
 .nojekyll               stops GitHub Pages running Jekyll over assets/
 ```
 
 ## Editing content
 
-Edit a fragment in `src/pages/`, then regenerate:
-
 ```bash
-node tools/build.mjs           # rewrite the six pages
-node tools/build.mjs --check   # fail if committed output is stale
+node tools/build.mjs           # regenerate index.html
+node tools/build.mjs --check   # fail if the committed page is stale
 ```
 
-The generator exists so the shared `<head>`, header, nav, pager and footer cannot
-drift across six files. **It is a dev tool, not a deploy step** — the generated
-HTML is committed and GitHub Pages never runs it. `tests/check.mjs` runs
-`--check`, so stale output fails the build.
+The generator keeps the head, header, tab strip and footer in one place.
+**It is a dev tool, not a deploy step** — the HTML is committed and GitHub Pages
+never runs it. `tests/check.mjs` runs `--check`, so stale output fails the build.
 
 ## Run locally
 
@@ -54,33 +67,30 @@ python3 -m http.server 8000
 Two zero-dependency suites. Both exit non-zero on failure; no `npm install`.
 
 ```bash
-node tests/check.mjs           # static analysis   — 42 checks
-node tests/browser-check.mjs   # real browser      — 31 checks
+node tests/check.mjs           # static analysis   — 55 checks
+node tests/browser-check.mjs   # real browser      — 38 checks
 ```
 
-**`check.mjs`** reads the source files and runs most checks **once per page**:
-one `<h1>` each, no skipped heading levels, unique titles, GitHub Pages path
-safety, every internal link and asset resolving, image/ARIA completeness, SEO
-head tags and JSON-LD. Site-wide it verifies the nav is byte-identical across all
-six pages, each page marks itself `aria-current="page"`, the prev/next pager
-chains 01→06 in document order, the generated output is in sync with `src/`,
-content completeness against the source doc, and it recomputes WCAG contrast for
-every colour token pair in both themes.
+**`check.mjs`** reads the source files: one `<h1>` and no skipped heading
+levels, GitHub Pages path safety, every asset and anchor resolving, image/ARIA
+completeness, SEO head tags and JSON-LD, the tab strip's shape (four tabs, no
+numbering, each pointing at a real section in document order), the static strip
+ground and per-tab imagery, the reveal failsafe, content completeness against
+the source doc and CV, the reel-to-script mapping, and it recomputes WCAG
+contrast for every colour token pair in both themes.
 
 **`browser-check.mjs`** drives headless Chrome over CDP (Node's built-in
-WebSocket — no Playwright/Puppeteer needed) and asserts what a static scan
-cannot see — most of it swept across **all six pages**: no horizontal scroll at
-375/768/1024/1440, every page fully revealing its content, the nav marking the
-current page, the pager walking 01→06 by clicking through, the full dialog
-lifecycle (open → focus → Esc → focus restored → scroll unlocked), the bilingual
-toggle, theme toggle and persistence, OS dark-mode preference, reduced motion,
-the JS-disabled path, `main.js` failing to load, 44px touch targets, and it
-recomputes contrast on **every rendered text node** against its composited
-background in both themes.
+WebSocket — no Playwright/Puppeteer) and asserts what a static scan cannot see:
+no horizontal scroll at 375/768/1024/1440, the scroll-reveal completing, the tab
+strip pinning after the hero and staying on screen, **scrolling each section
+activating its tab**, tab clicks landing clear of the sticky strip, per-tab
+images actually applied, the dialog lifecycle (open → focus → Esc → focus
+restored → scroll unlocked), the bilingual toggle, theme toggle and persistence,
+OS dark mode, reduced motion, the JS-disabled path, `main.js` failing to load,
+44px touch targets, and contrast on **every rendered text node** against its
+composited background in both themes.
 
-It auto-discovers Chrome (Playwright cache, Chrome, Chromium, Brave) and exits 0
-with a `SKIP` notice if none is installed. Point it at a specific binary with
-`--browser <path>`.
+It auto-discovers Chrome and exits 0 with a `SKIP` if none is installed.
 
 Both suites have been mutation-tested — deliberately broken inputs were verified
 to fail them.
@@ -164,10 +174,72 @@ Already in place: the hero portrait (1:1), the About photo (3:4), all four
 case-study images, all four social profile links, and the seven published
 Accodigit articles.
 
+## Audit notes
+
+A full pass over the code found and fixed:
+
+- **`aria-hidden="true"` on a focusable link** (axe `aria-hidden-focus`) — each
+  script poster was an `<a>` hidden from the accessibility tree while still
+  reachable. Rebuilt so the poster is the card's single, properly-named link.
+- **Duplicate outbound links** — every script card linked the same reel twice,
+  cluttering a screen reader's link list. Now one link per card.
+- **211 KB of eagerly-fetched images** — the four 9:16 posters were CSS
+  backgrounds, which are always downloaded. They are now `<img loading="lazy">`.
+  First load dropped from ~356 KB to **145 KB**.
+- **A duplicate `id="scripts"`** on both the section and its heading — invalid
+  HTML that silently breaks the in-page anchor and the `aria-labelledby`.
+- **20% of the stylesheet was dead** — 70 rules left behind by the restructures
+  (the old pager, contents list, multi-page frames). 40.6 KB → 32.7 KB.
+- **A fixed 350 ms guess** before moving focus after a tab jump; on a long scroll
+  it fired mid-flight. Now waits for `scrollend`, with an rAF idle fallback.
+
+Each fix has a test: no duplicate ids, every `aria-labelledby` resolves, no
+`aria-hidden` around anything focusable, below-the-fold images are lazy, one reel
+link per card, and the stylesheet parses with balanced braces.
+
+One thing investigated and **not** changed: `centreTab` uses `offsetLeft` to
+scroll the tab strip, which looked wrong because `offsetParent` is the sticky
+`.tabs` rather than the `.tabs-scroll` element being scrolled. Measured both ways
+in the browser — identical values, because the two share a left edge. The simpler
+original was kept.
+
+## Imagery
+
+Sagar's own photographs (portrait, About) come from the source document. The
+case-study, tab and script-card imagery is from **Unsplash**, whose licence
+permits free commercial use with no attribution required. Every image was
+reviewed before use, and `tests/check.mjs` fails the build on any unreferenced
+file in `assets/img`.
+
+A stock analytics dashboard showing invented figures (24,689 sent / 42.8% open)
+was deliberately **not** used — it sat next to the "Results" heading and read as
+if it were Reqx campaign data.
+
+The four script cards are illustrated by their subject — an excavation, a whale,
+a studio microphone, cracked earth — not by frames from the reels, which would
+misrepresent them. Each card links to the actual reel.
+
+## Figures on the page
+
+Every number is traceable to a source, and a test enforces it:
+
+- **45 → 18 days, 60%, 72 hrs** on the Results strip are quoted from the email
+  samples printed directly above them.
+- **25M+ views, 20,000+ followers** come from the CV.
+- The campaign's own **open and response rates were never supplied**, so they do
+  not appear. `tests/check.mjs` fails the build if a Results tile claims an open
+  or response rate, or carries any number that does not appear in the copy above
+  the strip — both cases are mutation-tested.
+
 ## Published articles
 
-Seven long-form pieces are linked from the Resume page, each with its published
-title and verbatim opening hook. All are bylined **Sagar Vishwakarma** on
+All seven Accodigit pieces run **520–850 words with 5–7 subheads** — blog length,
+not long-form. The site's own headings and intros say "published pieces", and a
+test fails the build if they drift back to claiming long-form. Quoted CV text is
+left verbatim; that is Sagar's own wording.
+
+The seven pieces are linked from the home page, each with its published title and
+verbatim opening hook. All are bylined **Sagar Vishwakarma** on
 `accodigit.com` — which is where the surname used across the site and in the
 JSON-LD comes from. `tests/check.mjs` asserts all seven URLs are present, that
 the card count matches, and that every external link carries

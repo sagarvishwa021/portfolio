@@ -150,15 +150,15 @@ try {
     cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 700 }, S);
   const media = (features) => cdp.send("Emulation.setEmulatedMedia", { features }, S);
 
-  const PAGES = ["index.html", "work.html", "resume.html", "about.html", "contact.html"];
-  const TABS  = ["work.html", "resume.html", "about.html", "contact.html"];
+  const PAGES = ["index.html"];
+  const TABS  = ["work", "resume", "about", "contact"];
 
   /* 1. no horizontal scroll, every page x every breakpoint */
   for (const w of [375, 768, 1024, 1440]) {
     await setViewport(w);
     const bad = [];
     for (const page of PAGES) {
-      await goto(BASE + page);
+      await goto(BASE);
       const r = await evalJs(`(() => {
         const d = document.documentElement;
         const over = [...document.querySelectorAll('body *')]
@@ -168,7 +168,7 @@ try {
       })()`);
       if (r.scrollW > r.clientW + 1) bad.push(`${page} ${r.scrollW}>${r.clientW} (${r.over.join(", ")})`);
     }
-    check(`no horizontal scroll @ ${w}px (all pages)`, bad.length === 0, bad.join(" | ") || `${PAGES.length} pages`);
+    check(`no horizontal scroll @ ${w}px`, bad.length === 0, bad.join(" | ") || "ok");
   }
 
   /* 1b. every page reveals its content and reports no console errors */
@@ -176,60 +176,170 @@ try {
     await setViewport(1280, 900);
     const bad = [];
     for (const page of PAGES) {
-      await goto(BASE + page);
+      await goto(BASE);
       const r = await evalJs(`(async () => {
         const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         for (let y = 0; y < document.body.scrollHeight; y += 300) {
           window.scrollTo(0, y); await frame(); await new Promise(r => setTimeout(r, 110));
         }
-        window.scrollTo(0,0); await new Promise(r => setTimeout(r, 700));
+        window.scrollTo({ top: 0, behavior: 'instant' }); await new Promise(r => setTimeout(r, 700));
         const els = [...document.querySelectorAll('.reveal')];
         return { total: els.length, hidden: els.filter(e => parseFloat(getComputedStyle(e).opacity) < 0.9).length };
       })()`);
       if (r.hidden) bad.push(`${page}: ${r.hidden}/${r.total} hidden`);
     }
-    check("every page fully reveals its content", bad.length === 0, bad.join(" | ") || `${PAGES.length} pages`);
+    check("the page fully reveals its content", bad.length === 0, bad.join(" | ") || "all reveals fired");
   }
 
-  /* 1c. the sticky tab strip navigates and marks the current page */
+  /* 1c. scrolling each section in turn moves the active tab and its background */
   {
-    const bad = [];
-    for (const page of PAGES) {
-      await goto(BASE + page);
-      const r = await evalJs(`(() => {
-        const cur = document.querySelectorAll('#nav a[aria-current="page"]');
-        const hrefs = [...document.querySelectorAll('#nav a')].map(a => a.getAttribute('href'));
-        const strip = document.querySelector('.tabs');
-        return { count: cur.length, href: cur[0] && cur[0].getAttribute('href'), navLen: hrefs.length,
-                 sticky: strip && getComputedStyle(strip).position === 'sticky',
-                 title: document.querySelector('h1') ? document.querySelector('h1').textContent.trim().slice(0,40) : null };
-      })()`);
-      if (!r.sticky) bad.push(`${page}: tab strip is not sticky`);
-      if (r.navLen !== 4) bad.push(`${page}: tab strip has ${r.navLen} links, expected 4`);
-      const wantCurrent = TABS.includes(page);
-      if (wantCurrent && (r.count !== 1 || r.href !== page)) bad.push(`${page}: aria-current=${r.href} (x${r.count})`);
-      if (!wantCurrent && r.count !== 0) bad.push(`${page}: home should not mark a tab current`);
-      if (!r.title) bad.push(`${page}: no <h1>`);
-    }
-    check("tab strip marks the current page", bad.length === 0, bad.join(" | ") || `${PAGES.length} pages, 4 tabs each`);
+    await setViewport(1280, 900);
+    await goto(BASE);
+    const r = await evalJs(`(async () => {
+      const out = [];
+      const nav = document.querySelector('.tabs');
+      for (const id of ${JSON.stringify(TABS)}) {
+        const sec = document.getElementById(id);
+        window.scrollTo({ top: sec.getBoundingClientRect().top + scrollY + 200, behavior: 'instant' });
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        await new Promise(r => setTimeout(r, 500));
+        const cur = document.querySelector('.tabs a[aria-current="page"]');
+        out.push({ want: id, got: cur && cur.getAttribute('data-tab'), bg: nav.getAttribute('data-bg') });
+      }
+      return out;
+    })()`);
+    const wrongTab = r.filter((x) => x.got !== x.want);
+    check("scrolling a section activates its tab",
+      wrongTab.length === 0,
+      wrongTab.length ? wrongTab.map((x) => `${x.want}→${x.got}`).join(", ") : r.map((x) => x.want).join(" → "));
+    const bgs = await evalJs(`(() => {
+      const out = {};
+      document.querySelectorAll('.tabs a[data-tab]').forEach(a => {
+        const k = a.getAttribute('data-tab');
+        out[k] = { img: getComputedStyle(a.querySelector('.t-photo')).backgroundImage,
+                   fill: getComputedStyle(a.querySelector('.t-label')).backgroundColor,
+                   w: Math.round(a.getBoundingClientRect().width),
+                   h: Math.round(a.getBoundingClientRect().height),
+                   active: a.getAttribute('aria-current') === 'page' };
+      });
+      return out;
+    })()`);
+    const missingImg = TABS.filter((t) => !bgs[t] || !bgs[t].img.includes(`tab-${t}`));
+    check("each tab carries its own use-case image", missingImg.length === 0,
+      missingImg.length ? `no image on: ${missingImg.join(", ")}` : "4 distinct tab images");
+    const translucent = TABS.filter((t) => /rgba\(0, 0, 0, 0\)/.test(bgs[t].fill));
+    check("every tab label sits on an opaque ground", translucent.length === 0,
+      translucent.length ? `transparent on: ${translucent.join(", ")}` : bgs.work.fill);
+    const act = TABS.map((t) => bgs[t]).find((b) => b.active);
+    const rest = TABS.map((t) => bgs[t]).filter((b) => !b.active);
+    const bigger = act && rest.every((b) => act.w > b.w + 20 && act.h > b.h + 15);
+    const stripH = await evalJs(`Math.round(document.querySelector('.tabs').getBoundingClientRect().height)`);
+    check("the sticky strip does not eat the viewport", stripH <= 110,
+      `${stripH}px tall (budget 110)`);
+    check("the active tab is visibly larger than the others", !!bigger,
+      act ? `active ${act.w}x${act.h} vs ${rest[0].w}x${rest[0].h}` : "no active tab");
+  }
+
+  /* 1c0. over the hero no tab is lit; a long jump back up must clear it */
+  {
+    await setViewport(1280, 900);
+    await goto(BASE);
+    const r = await evalJs(`(async () => {
+      const settle = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const tab = () => (document.querySelector('.tabs a[aria-current="page"]') || {}).dataset?.tab || null;
+      const atLoad = tab();
+      // to the very bottom, then straight back to the top in one jump
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' });
+      await settle(); await new Promise(r => setTimeout(r, 400));
+      const atEnd = tab();
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      await settle(); await new Promise(r => setTimeout(r, 500));
+      return { atLoad, atEnd, backAtTop: tab() };
+    })()`);
+    check("no tab is lit over the hero", r.atLoad === null && r.backAtTop === null,
+      `on load: ${r.atLoad}, at foot: ${r.atEnd}, back at top: ${r.backAtTop}`);
+  }
+
+  /* 1c0b. Work Samples must light while the featured cards own the screen —
+     well before #work itself reaches the sticky strip. */
+  {
+    await setViewport(1280, 900);
+    await goto(BASE);
+    const r = await evalJs(`(async () => {
+      const settle = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const featured = document.getElementById('featured');
+      // put the featured block squarely in the middle of the screen
+      window.scrollTo({ top: featured.getBoundingClientRect().top + scrollY + 300, behavior: 'instant' });
+      await settle(); await new Promise(r => setTimeout(r, 450));
+      const cur = document.querySelector('.tabs a[aria-current="page"]');
+      const strip = document.querySelector('.tabs').getBoundingClientRect().bottom;
+      const workTop = document.getElementById('work').getBoundingClientRect().top;
+      return { tab: cur && cur.dataset.tab, workTop: Math.round(workTop), strip: Math.round(strip) };
+    })()`);
+    check("Work Samples lights while the featured cards own the screen",
+      r.tab === "work" && r.workTop > r.strip + 200,
+      `tab=${r.tab}, #work top still ${r.workTop}px (strip ends ${r.strip}px)`);
+  }
+
+  /* 1c0c. Isolates the picking rule from the attribution fix: park the
+     work/resume boundary 300px down the screen. Resume then occupies ~600px of
+     the readable band against work's ~200, so the tab must already have handed
+     over. The old "section top must reach the strip" rule would still say work
+     here, because y=111 is inside the work section. */
+  {
+    await setViewport(1280, 900);
+    await goto(BASE);
+    const r = await evalJs(`(async () => {
+      const settle = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const resume = document.getElementById('resume');
+      window.scrollTo({ top: resume.getBoundingClientRect().top + scrollY - 300, behavior: 'instant' });
+      await settle(); await new Promise(r => setTimeout(r, 450));
+      const cur = document.querySelector('.tabs a[aria-current="page"]');
+      const strip = Math.round(document.querySelector('.tabs').getBoundingClientRect().bottom);
+      const top = Math.round(resume.getBoundingClientRect().top);
+      const view = window.innerHeight;
+      return { tab: cur && cur.dataset.tab, top, strip,
+               resumeArea: Math.round(Math.min(view, top + resume.offsetHeight) - Math.max(top, strip)),
+               workArea: Math.round(top - strip) };
+    })()`);
+    check("the tab hands over once the next section takes most of the screen",
+      r.tab === "resume",
+      `tab=${r.tab} with resume showing ${r.resumeArea}px vs work ${r.workArea}px`);
+  }
+
+  /* 1c1. clicking a tab jumps to its section, clear of the sticky strip */
+  {
+    await goto(BASE);
+    const r = await evalJs(`(async () => {
+      const nav = document.querySelector('.tabs');
+      const link = document.querySelector('.tabs a[data-tab="about"]');
+      link.click();
+      await new Promise(r => setTimeout(r, 900));
+      const sec = document.getElementById('about').getBoundingClientRect();
+      const strip = nav.getBoundingClientRect();
+      return { secTop: Math.round(sec.top), stripBottom: Math.round(strip.bottom),
+               clear: sec.top >= strip.bottom - 2 };
+    })()`);
+    check("clicking a tab lands the section below the sticky strip", r.clear,
+      `section top ${r.secTop}, strip bottom ${r.stripBottom}`);
   }
 
   /* 1c2. the tab strip persists at the top once the hero has scrolled past */
   {
     await setViewport(1280, 900);
-    await goto(BASE + "index.html");
+    await goto(BASE);
     const r = await evalJs(`(async () => {
       const strip = document.querySelector('.tabs');
       const before = strip.getBoundingClientRect().top;
       const heroBottom = document.querySelector('.hero').getBoundingClientRect().bottom;
       // scroll just past the hero — the case the design actually cares about
-      window.scrollTo(0, heroBottom + 400);
+      window.scrollTo({ top: heroBottom + 400, behavior: 'instant' });
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       await new Promise(r => setTimeout(r, 250));
       const pinned = strip.getBoundingClientRect().top;
       const header = document.querySelector('.site-header').getBoundingClientRect().bottom;
       // and still visible at the very bottom of the page
-      window.scrollTo(0, document.body.scrollHeight);
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' });
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       await new Promise(r => setTimeout(r, 250));
       const atEnd = strip.getBoundingClientRect();
@@ -245,36 +355,39 @@ try {
       `header bottom at y=${r.header}`);
   }
 
-  /* 1d. clicking through the pager walks the whole doc order */
+  /* 1c3. the mobile tab scroller centres the active tab correctly */
   {
-    await goto(BASE + "work.html");
-    const walked = await evalJs(`(async () => {
-      const seen = [location.pathname.split('/').pop() || 'index.html'];
-      return seen;
+    await setViewport(390, 800);
+    await goto(BASE);
+    const r = await evalJs(`(async () => {
+      const strip = document.querySelector('.tabs-scroll');
+      const overflowing = strip.scrollWidth > strip.clientWidth;
+      const sec = document.getElementById('contact');
+      window.scrollTo({ top: sec.getBoundingClientRect().top + scrollY + 200, behavior: 'instant' });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise(r => setTimeout(r, 700));
+      const cur = document.querySelector('.tabs a[aria-current="page"]');
+      if (!cur) return { overflowing, ok: false, why: 'no active tab' };
+      const sb = strip.getBoundingClientRect(), cb = cur.getBoundingClientRect();
+      // fully inside the visible scroller, not clipped at either edge
+      return { overflowing, ok: cb.left >= sb.left - 1 && cb.right <= sb.right + 1,
+               left: Math.round(cb.left - sb.left), right: Math.round(sb.right - cb.right),
+               maxed: strip.scrollLeft <= strip.scrollWidth - strip.clientWidth + 1 };
     })()`);
-    let path = [];
-    let current = "work.html";
-    for (let i = 0; i < 5; i++) {
-      await goto(BASE + current);
-      path.push(current);
-      const next = await evalJs(`(() => { const a = document.querySelector('.pager-next'); return a ? a.getAttribute('href') : null; })()`);
-      if (!next) break;
-      current = next;
-    }
-    check("pager walks the four tabbed pages in order",
-      JSON.stringify(path) === JSON.stringify(TABS), path.join(" → "));
+    check("the active tab is scrolled into view on a narrow screen",
+      r.ok && r.maxed, r.ok ? "in view" : `${r.why || "clipped"} (left ${r.left}, right ${r.right})`);
   }
 
   /* 2. reveal completes */
   await setViewport(1280, 900);
-  await goto(BASE + "work.html");
+  await goto(BASE);
   const revealed = await evalJs(`(async () => {
     const els = [...document.querySelectorAll('.reveal')];
     const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     for (let y = 0; y < document.body.scrollHeight; y += 300) {
-      window.scrollTo(0, y); await frame(); await new Promise(r => setTimeout(r, 110));
+      window.scrollTo({ top: y, behavior: 'instant' }); await frame(); await new Promise(r => setTimeout(r, 110));
     }
-    window.scrollTo(0,0); await new Promise(r=>setTimeout(r,800));
+    window.scrollTo({ top: 0, behavior: 'instant' }); await new Promise(r=>setTimeout(r,800));
     const hidden = els.filter(e => parseFloat(getComputedStyle(e).opacity) < 0.9);
     return { total: els.length, hidden: hidden.length,
              sample: hidden.slice(0,3).map(e => e.tagName + '.' + String(e.className).split(' ')[0]) };
@@ -284,7 +397,7 @@ try {
 
   /* 4. dialog lifecycle */
   const dlg = await evalJs(`(async () => {
-    window.scrollTo(0,0);
+    window.scrollTo({ top: 0, behavior: 'instant' });
     const btn = document.querySelector('.script-open');
     const d = document.getElementById('scriptDialog');
     btn.focus(); btn.click();
@@ -361,7 +474,7 @@ try {
 
   /* 8. reduced motion */
   await media([{ name: "prefers-reduced-motion", value: "reduce" }]);
-  await goto(BASE + "work.html");
+  await goto(BASE);
   const rm = await evalJs(`(() => {
     const els = [...document.querySelectorAll('.reveal')];
     return { total: els.length, invisible: els.filter(e => parseFloat(getComputedStyle(e).opacity) < 0.9).length };
@@ -376,7 +489,7 @@ try {
          invisible. This asserts the page degrades to fully readable instead. */
   await cdp.send("Network.enable", {}, S);
   await cdp.send("Network.setBlockedURLs", { urls: ["*main.js"] }, S);
-  await goto(BASE + "work.html");
+  await goto(BASE);
   {
     const { root } = await cdp.send("DOM.getDocument", { depth: -1 }, S);
     await cdp.send("CSS.enable", {}, S);
@@ -394,7 +507,7 @@ try {
 
   /* 9. JavaScript disabled */
   await cdp.send("Emulation.setScriptExecutionDisabled", { value: true }, S);
-  await goto(BASE + "work.html");
+  await goto(BASE);
   const { root } = await cdp.send("DOM.getDocument", { depth: -1 }, S);
   const { outerHTML } = await cdp.send("DOM.getOuterHTML", { nodeId: root.nodeId }, S);
   check("all 4 scripts readable in DOM without JS",
@@ -424,12 +537,12 @@ try {
   {
     const bad = [];
     for (const page of PAGES) {
-      await goto(BASE + page);
+      await goto(BASE);
       const t = await evalJs(TARGET_JS);
       if (t.length) bad.push(`${page}: ${t.slice(0, 3).join(", ")}`);
     }
-    check("interactive targets are at least 44px tall (all pages)", bad.length === 0,
-      bad.join(" | ") || `${PAGES.length} pages`);
+    check("interactive targets are at least 44px tall", bad.length === 0,
+      bad.join(" | ") || "all OK");
   }
 
   /* 11. runtime contrast on rendered text */
@@ -482,17 +595,17 @@ try {
     })()`;
     const bad = [];
     for (const page of PAGES) {
-      await goto(BASE + page);
+      await goto(BASE);
       const worst = await evalJs(CONTRAST_JS);
       if (worst.r !== 99) bad.push(`${page}: ${worst.r.toFixed(2)}:1 (need ${worst.need}) on ${worst.sel} — "${worst.txt}"`);
     }
-    check(`runtime contrast (${scheme}): all rendered text, all pages`, bad.length === 0,
-      bad.join(" | ") || `${PAGES.length} pages, no violations`);
+    check(`runtime contrast (${scheme}): all rendered text`, bad.length === 0,
+      bad.join(" | ") || "no violations");
   }
   await media([]);
 
   /* 12. console clean */
-  await goto(BASE + "work.html");
+  await goto(BASE);
   await evalJs(`(async () => {
     document.querySelector('.script-open').click();
     await new Promise(r => setTimeout(r, 250));

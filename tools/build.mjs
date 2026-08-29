@@ -19,53 +19,30 @@ const read = (p) => readFileSync(join(ROOT, p), "utf8");
 /* Page order mirrors the source document's tab order:
    Profile (1st) → Email Copywriter (2nd) → Video Scriptwriter (3rd)
    → Resume (4th) → About me (5th) → Contact (6th). */
-const PAGES = [
-  { key: "index",   file: "index.html",   nav: null,            // home = the wordmark, not a tab
-    title: "Sagar Vishwakarma — Writer",
-    desc: "Sagar Vishwakarma writes B2B cold email sequences, short-form video scripts and long-form articles. Featured writing samples, resume and contact.",
-    body: ["_hero"], dialog: false },
-
-  { key: "work",    file: "work.html",    nav: "Work Samples",
-    title: "Work Samples — Sagar Vishwakarma",
-    desc: "Email copywriting for Reqx Technologies and short-form video scriptwriting with 25M+ views — case study, annotated samples, and four scripts in Hinglish and English.",
-    body: ["_work", "_scripts"], dialog: true },
-
-  { key: "resume",  file: "resume.html",  nav: "Resume",
-    title: "Resume — Sagar Vishwakarma",
-    desc: "Sagar Vishwakarma's resume — experience, skills and education. Download as Word or PDF.",
-    body: ["_resume"], dialog: false },
-
-  { key: "about",   file: "about.html",   nav: "About Me",
-    title: "About Me — Sagar Vishwakarma",
-    desc: "How a school news report in the 7th standard turned into a career writing B2B email, video scripts and long-form articles.",
-    body: ["_about"], dialog: false },
-
-  { key: "contact", file: "contact.html", nav: "Contact",
-    title: "Contact — Sagar Vishwakarma",
-    desc: "Get in touch with Sagar Vishwakarma — email, phone, LinkedIn, Instagram, YouTube and Facebook.",
-    body: ["_contact"], dialog: false },
+/* One scrolling document. Each entry is a section; the four with a `nav` label
+   become tabs that auto-highlight as you scroll past them. */
+const SECTIONS = [
+  { key: "work",    id: "work",    nav: "Work Samples", body: ["_work", "_scripts"] },
+  { key: "resume",  id: "resume",  nav: "Resume",       body: ["_resume"] },
+  { key: "about",   id: "about",   nav: "About Me",     body: ["_about"] },
+  { key: "contact", id: "contact", nav: "Contact",      body: ["_contact"] },
 ];
-
-/* Only these four appear as tabs; the Profile page is reached via the wordmark. */
-const TABS = PAGES.filter((p) => p.nav);
+const TABS = SECTIONS;
+const TITLE = "Sagar Vishwakarma — Writer";
+const DESC = "Sagar Vishwakarma writes B2B cold email sequences, short-form video scripts and researched business explainers. Featured writing samples, work, resume and contact.";
 
 /* Tab strip — four tabs, matching the wireframes. No numbering; the active tab
    is enlarged and filled rather than merely tinted. Sticky, so on the Profile
    page it rides up with the hero and then pins. */
-const tabs = (current) => `<nav class="tabs" id="nav" aria-label="Sections" data-bg="${current}">
+const tabs = () => `<nav class="tabs" id="nav" aria-label="Sections">
   <div class="tabs-scroll">
     <div class="tabs-inner">
-${TABS.map((p) => `      <a href="${p.file}"${p.key === current ? ' aria-current="page"' : ""}>${p.nav}</a>`).join("\n")}
+${TABS.map((p) => `      <a href="#${p.id}" data-tab="${p.key}"><span class="t-photo"></span><span class="t-label">${p.nav}<span class="t-bar"></span></span></a>`).join("\n")}
     </div>
   </div>
 </nav>`;
 
 const dialogHtml = read("src/partials/script-dialog.html").trimEnd();
-
-/* On the Profile page the tab strip is injected here — after the hero, before
-   the rest — so it scrolls up with the hero and then pins. */
-const SPLIT = '\n\n<section class="section" id="featured"';
-
 
 const JSONLD = `{
   "@context": "https://schema.org",
@@ -74,7 +51,7 @@ const JSONLD = `{
   "alternateName": "Sagar",
   "jobTitle": "Copywriter & Video Scriptwriter",
   "email": "mailto:Sagarvishwa5901@gmail.com",
-  "description": "B2B email copywriter, short-form video scriptwriter and long-form business writer.",
+  "description": "B2B email copywriter, short-form video scriptwriter and writer of researched business explainers.",
   "knowsAbout": ["Email copywriting", "B2B cold outreach", "Video scriptwriting", "Long-form articles"],
   "worksFor": { "@type": "Organization", "name": "Accodigit", "url": "https://accodigit.com/" },
   "sameAs": [
@@ -85,27 +62,41 @@ const JSONLD = `{
   ]
 }`;
 
-function render(page) {
-  const body = page.body.map((b) => read(`src/pages/${b}.html`).trimEnd()).join("\n\n");
+function render() {
+  const hero = read("src/pages/_hero.html").trimEnd();
+  /* The featured writing samples are Work Samples too; without this the spy
+     has a tall untagged gap and no tab is lit while the reader is in it. */
+  const featured = read("src/pages/_featured.html").trimEnd()
+    .replace(/<section class="section"/g, '<section class="section" data-spy="work"');
+  /* Tag every top-level <section> with the tab that owns it. A group can span
+     more than one section (Work Samples covers email copy AND scriptwriting),
+     and an untagged gap would leave the scroll-spy with nothing to report. */
+  const body = SECTIONS.map((sec) =>
+    sec.body
+      .map((b) => read(`src/pages/${b}.html`).trimEnd()
+        .replace(/<section class="section"/g, `<section class="section" data-spy="${sec.key}"`))
+      .join("\n\n")
+  ).join("\n\n");
+
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${page.title}</title>
-<meta name="description" content="${page.desc}">
+<title>${TITLE}</title>
+<meta name="description" content="${DESC}">
 <meta name="author" content="Sagar Vishwakarma">
-<link rel="canonical" href="https://example.github.io/${page.file === "index.html" ? "" : page.file}">
+<link rel="canonical" href="https://example.github.io/">
 
 <meta property="og:type" content="profile">
-<meta property="og:title" content="${page.title}">
-<meta property="og:description" content="${page.desc}">
+<meta property="og:title" content="${TITLE}">
+<meta property="og:description" content="${DESC}">
 <meta property="og:image" content="assets/img/og-cover.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="${page.title}">
-<meta name="twitter:description" content="${page.desc}">
+<meta name="twitter:title" content="${TITLE}">
+<meta name="twitter:description" content="${DESC}">
 <meta name="twitter:image" content="assets/img/og-cover.png">
 
 <meta name="theme-color" content="#FCFAF5" media="(prefers-color-scheme: light)">
@@ -143,7 +134,7 @@ ${JSONLD}
 
 <header class="site-header">
   <div class="wrap">
-    <a class="wordmark" href="index.html"><span class="wm-name">Sagar Vishwakarma</span> <span class="wm-sep">/</span> <span class="wm-role">Writer</span></a>
+    <a class="wordmark" href="#top"><span class="wm-name">Sagar Vishwakarma</span> <span class="wm-sep">/</span> <span class="wm-role">Writer</span></a>
     <button type="button" class="icon-btn theme-toggle" id="themeToggle"
             aria-pressed="false" aria-label="Switch to dark theme">
       <svg class="sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
@@ -157,18 +148,24 @@ ${JSONLD}
 </header>
 
 <main id="main">
-${page.key === "index" ? body.replace(SPLIT, "\n\n" + tabs(page.key) + SPLIT) : tabs(page.key) + "\n\n" + body}
-</main>
+${hero}
 
-${pager(page)}
+${tabs()}
+
+${featured}
+
+${body}
+</main>
 
 <footer class="site-footer">
   <div class="wrap">
-    <span>&copy; 2026 Sagar</span>
-    <span><a href="contact.html">Get in touch</a></span>
+    <span>&copy; 2026 Sagar Vishwakarma</span>
+    <span><a href="#contact">Get in touch</a></span>
   </div>
 </footer>
-${page.dialog ? "\n" + dialogHtml + "\n" : ""}
+
+${dialogHtml}
+
 <div class="visually-hidden" role="status" aria-live="polite" id="liveRegion"></div>
 
 <script src="assets/js/main.js" defer onerror="document.documentElement.classList.remove('js')"></script>
@@ -177,44 +174,18 @@ ${page.dialog ? "\n" + dialogHtml + "\n" : ""}
 `;
 }
 
-/* Prev/next strip — the doc's page order made walkable. */
-function pager(page) {
-  const i = TABS.findIndex((p) => p.key === page.key);
-  if (i === -1) return "";
-  const prev = TABS[i - 1], next = TABS[i + 1];
-  const arrow = (d) => d === "prev"
-    ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>'
-    : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
-  return `<nav class="pager" aria-label="Page">
-  <div class="wrap">
-    ${prev ? `<a class="pager-link pager-prev" href="${prev.file}">
-      ${arrow("prev")}
-      <span><span class="pager-dir">Previous</span><span class="pager-name">${prev.nav}</span></span>
-    </a>` : `<span></span>`}
-    ${next ? `<a class="pager-link pager-next" href="${next.file}">
-      <span><span class="pager-dir">Next</span><span class="pager-name">${next.nav}</span></span>
-      ${arrow("next")}
-    </a>` : `<span></span>`}
-  </div>
-</nav>`;
-}
-
 const check = process.argv.includes("--check");
 let stale = 0;
-for (const page of PAGES) {
-  const out = render(page);
-  const path = join(ROOT, page.file);
-  let existing = null;
-  try { existing = readFileSync(path, "utf8"); } catch {}
-  if (check) {
-    if (existing !== out) { stale++; console.log(`STALE  ${page.file}`); }
-    else console.log(`ok     ${page.file}`);
-  } else {
-    writeFileSync(path, out);
-    console.log(`wrote  ${page.file}  ${(out.length / 1024).toFixed(1)} KB`);
-  }
-}
+const out = render();
+const path = join(ROOT, "index.html");
+let existing = null;
+try { existing = readFileSync(path, "utf8"); } catch {}
 if (check) {
-  console.log(stale ? `\n${stale} page(s) stale — run: node tools/build.mjs` : "\nall pages up to date");
-  process.exit(stale ? 1 : 0);
+  if (existing !== out) { stale = 1; console.log("STALE  index.html"); }
+  else console.log("ok     index.html");
+  console.log(stale ? "\nrun: node tools/build.mjs" : "\nup to date");
+  process.exit(stale);
+} else {
+  writeFileSync(path, out);
+  console.log(`wrote  index.html  ${(out.length / 1024).toFixed(1)} KB`);
 }
