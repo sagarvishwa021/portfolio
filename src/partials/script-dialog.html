@@ -1,0 +1,19 @@
+<!-- Reused for every script. Content is cloned from the matching <details>. -->
+<dialog class="script-dialog" id="scriptDialog" aria-labelledby="dialogTitle">
+  <div class="dialog-head">
+    <div>
+      <span class="tag" id="dialogTag"></span>
+      <h2 id="dialogTitle" tabindex="-1"></h2>
+    </div>
+    <div class="dialog-tools">
+      <div class="lang-switch" role="group" aria-label="Script language">
+        <button type="button" data-lang-btn="en" aria-pressed="true">EN</button>
+        <button type="button" data-lang-btn="hi" aria-pressed="false">Hinglish</button>
+      </div>
+      <button type="button" class="icon-btn" id="dialogClose" aria-label="Close script">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="dialog-scroll" id="dialogScroll"></div>
+</dialog>
